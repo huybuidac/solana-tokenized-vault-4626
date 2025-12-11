@@ -1,0 +1,6 @@
+# Rust formatter configuration
+# Rustfmt always uses 4 spaces for indentation (cannot be changed)
+# This ensures we use spaces instead of tabs
+
+hard_tabs = false
+

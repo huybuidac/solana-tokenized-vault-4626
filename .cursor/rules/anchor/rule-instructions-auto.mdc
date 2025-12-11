@@ -1,0 +1,130 @@
+---
+description: 
+globs: programs/*/src/instructions/**/*.rs
+alwaysApply: false
+---
+
+# Instructions
+
+## Critical Rules
+
+- **No Duplication - Consolidate Similar Functions**:
+  - If multiple instructions share the same accounts struct, consolidate them into one file with multiple `process_*` functions
+  - Use function parameters to differentiate behavior instead of creating separate files
+  - Example: `process_create_token(ctx, collect_fee: bool)` instead of separate files for whitelisted/non-whitelisted variants
+  - Keep related operations together to improve maintainability
+
+- **Extract CPI Calls - Never Inline**:
+  - Never write CPI calls directly in `process_*` functions
+  - Extract all CPI operations into dedicated helper methods within the accounts struct `impl` block
+  - Use descriptive method names that clearly indicate the CPI operation (e.g., `collect_fee()`, `initialize_token_metadata()`, `transfer_tokens()`)
+  - This improves code readability and makes the main logic flow clear
+
+- **Use Token Interface When Possible**:
+  - Always prefer `anchor_spl::token_interface` over `anchor_spl::token` or `anchor_spl::token_2022`
+  - Use `Interface<'info, TokenInterface>` instead of concrete token programs
+  - Use `InterfaceAccount<'info, Mint>` and `InterfaceAccount<'info, TokenAccount>` for flexibility
+  - This ensures compatibility with both Token Program and Token-2022
+
+- **Clean Structure**:
+  - Order: imports → accounts struct → `process_*` functions → helper structs/enums → `impl` block with CPI helpers
+  - Keep `process_*` functions focused on orchestration, not implementation details
+  - Use descriptive names for all functions and structs
+
+## Examples
+
+<example>
+  **Valid: Clean instruction with extracted CPI calls and token interface**
+  
+  ```rust
+  #[derive(Accounts)]
+  pub struct CreateToken<'info> {
+      #[account(mut)]
+      pub user: Signer<'info>,
+      #[account(seeds = [CONFIG_SEED.as_bytes()], bump)]
+      pub config: AccountLoader<'info, Config>,
+      #[account(mut)]
+      pub fee_recipient: UncheckedAccount<'info>,
+      #[account(
+          ...
+          mint::token_program = token_program,
+      )]
+      pub mint: InterfaceAccount<'info, Mint>,
+      pub token_program: Interface<'info, TokenInterface>,
+      pub system_program: Program<'info, System>,
+  }
+  
+  // ✅ Single file with multiple process functions sharing same accounts
+  pub fn process_create_token(ctx: Context<CreateToken>, collect_fee: bool) -> Result<()> {
+      if collect_fee {
+          ctx.accounts.collect_fee()?;
+      }
+      ctx.accounts.initialize_token_metadata(args)?;
+      Ok(())
+  }
+  
+  // ✅ CPI calls extracted into helper methods
+  impl<'info> CreateToken<'info> {
+      pub fn collect_fee(&self) -> Result<()> {
+          let instruction = anchor_lang::solana_program::system_instruction::transfer(
+              &self.user.key(),
+              &self.config.load()?.fee_recipient,
+              self.config.load()?.creation_fee,
+          );
+          anchor_lang::solana_program::program::invoke(
+              &instruction,
+              &[self.user.to_account_info(), self.fee_recipient.to_account_info()],
+          )?;
+          Ok(())
+      }
+  }
+  ```
+</example>
+
+<example type="invalid">
+  **Invalid: Inline CPI calls and duplicated files**
+  
+  ```rust
+  // ❌ File: create_token.rs
+  use anchor_spl::token_2022::{Token2022}; // ❌ Not using token_interface
+  
+  #[derive(Accounts)]
+  pub struct CreateToken<'info> {
+      pub user: Signer<'info>,
+      pub mint: Account<'info, Mint>, // ❌ Not using InterfaceAccount
+      pub token_program: Program<'info, Token2022>, // ❌ Not using Interface
+  }
+  
+  pub fn process_create_token(ctx: Context<CreateToken>, args: TokenMetadataArgs) -> Result<()> {
+      // ❌ CPI call directly in process function
+      let instruction = anchor_lang::solana_program::system_instruction::transfer(
+          &ctx.accounts.user.key(),
+          &ctx.accounts.fee_recipient.key(),
+          fee_amount,
+      );
+      anchor_lang::solana_program::program::invoke(
+          &instruction,
+          &[ctx.accounts.user.to_account_info(), ctx.accounts.fee_recipient.to_account_info()],
+      )?;
+      
+      // ❌ Another inline CPI call
+      token_metadata_initialize(
+          CpiContext::new(/* ... */),
+          args.name,
+          args.symbol,
+          args.uri,
+      )?;
+      Ok(())
+  }
+  
+  // ❌ File: create_token_whitelisted.rs - duplicated file with same accounts
+  #[derive(Accounts)]
+  pub struct CreateToken<'info> {
+      // ... same accounts as above
+  }
+  
+  pub fn process_create_token_whitelisted(ctx: Context<CreateToken>, args: TokenMetadataArgs) -> Result<()> {
+      // ... same logic but without fee collection
+  }
+  ```
+</example>

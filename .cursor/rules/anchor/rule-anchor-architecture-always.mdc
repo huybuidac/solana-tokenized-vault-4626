@@ -1,0 +1,58 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+
+# Anchor Architecture
+
+## Critical Rules
+
+- **Clean Architecture**: Maintain strict separation of concerns with distinct layers:
+  - `instructions/` - Instruction handlers and business logic
+  - `states/` - Account state definitions
+  - `access_controls/` - Authorization logic and permission checks
+  - `views/` - View functions for data queries
+  - `utils/` - Utility functions
+  - Never mix concerns between layers
+
+- **State Management**:
+  - Prioritize `zero_copy` for account states to optimize memory usage
+  - Implement additional helper functions for state accounts
+  - Use proper account constraints and validation
+
+- **Access Control**:
+  - Centralize authorization checks in `lib.rs` at program entry points
+  - Use custom modifiers for granular permission management
+  - Implement role-based access patterns in `access_controls/` module
+  - Always validate caller permissions before executing critical operations
+
+- **Testing Standards**:
+  - Always use fixtures for test setup (e.g., `factory-fixture.ts`)
+  - Leverage `chai-extended.ts` for custom assertions (balance changes, BN comparisons)
+  - Test all access control paths and error conditions
+  - Use LiteSVM for fast test execution
+
+## Directory Structure
+
+```text
+programs/
+└── <program-name>/
+    └── src/
+        ├── lib.rs              # Entry point with access control
+        ├── error.rs            # Error definitions
+        ├── access_controls/    # Authorization logic
+        ├── instructions/       # Instruction handlers
+        │   └── admin/          # Admin-specific instructions
+        ├── views/              # View functions
+        ├── states/             # Account state definitions (use zero_copy)
+        └── utils/              # Utility functions
+
+tests/
+├── fixtures/
+│   ├── chai-extended.ts        # Custom Chai assertions
+│   ├── <program>-fixture.ts    # Program test fixture
+│   ├── spl.ts                  # Token utilities
+│   └── utils.ts                # General test helpers
+└── <feature>.ts                # Feature tests
+```

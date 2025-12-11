@@ -1,0 +1,91 @@
+---
+description: 
+globs: programs/**/src/lib.rs
+alwaysApply: false
+---
+
+# lib.rs Entry Point
+
+## Critical Rules
+
+- **No Business Logic**: 
+  - `lib.rs` serves only as an entry point and router
+  - Never implement business logic directly in instruction handlers
+  - Always delegate to `process_*` functions from the `instructions/` module
+  - Keep instruction handlers thin - only call the corresponding processor
+
+- **Clear Instruction Classification**:
+  - Use clear comment separators to categorize instructions into sections:
+    - **User Instructions**: Public-facing operations (e.g., create, update, transfer)
+    - **Views**: Read-only query functions (e.g., get_fee, get_config)
+    - **Admin Instructions**: Administrative operations (e.g., update config, manage permissions)
+  - Group related instructions together within their section
+  - Maintain consistent ordering: User → Views → Admin
+
+- **Access Control at Entry Point**:
+  - Apply `#[access_control()]` decorator for all protected instructions
+  - Use access control functions from `access_controls/` module
+  - Check permissions before delegating to processor functions
+  - Never inline authorization logic - always use dedicated access control functions
+  - Examples: `only_owner()`, `only_permission()`, `only_permission_admin()`
+
+## Examples
+
+<example>
+  **Valid: Clean entry point with proper delegation and access control**
+  
+  ```rust
+      pub fn create_token(ctx: Context<CreateToken>, args: TokenMetadataArgs) -> Result<()> {
+          process_create_token(ctx, args)
+      }
+  
+      #[access_control(only_permission(&ctx.accounts.access, WHITELIST_PERMISSION))]
+      pub fn create_token_whitelisted(ctx: Context<CreateToken>, args: TokenMetadataArgs) -> Result<()> {
+          process_create_token_whitelisted(ctx, args)
+      }
+
+      #[access_control(only_owner(&ctx.accounts.config, *ctx.accounts.owner.key))]
+      pub fn update_fee(ctx: Context<UpdateConfig>, new_fee: u64) -> Result<()> {
+          process_update_fee(ctx, new_fee)
+      }
+  ```
+</example>
+
+<example type="invalid">
+  **Invalid: Business logic in lib.rs and missing access control**
+  
+  ```rust
+  #[program]
+      pub fn create_token(ctx: Context<CreateToken>, args: TokenMetadataArgs) -> Result<()> {
+          // ❌ Business logic directly in lib.rs
+          let fee = ctx.accounts.config.creation_fee;
+          let fee_recipient = ctx.accounts.config.fee_recipient;
+          
+          // Transfer fee
+          anchor_lang::system_program::transfer(
+              CpiContext::new(
+                  ctx.accounts.system_program.to_account_info(),
+                  anchor_lang::system_program::Transfer {
+                      from: ctx.accounts.payer.to_account_info(),
+                      to: fee_recipient.to_account_info(),
+                  },
+              ),
+              fee,
+          )?;
+          
+          // Create token
+          // ... more logic here
+          Ok(())
+      }
+  
+      // ❌ Missing access_control decorator
+      pub fn update_fee(ctx: Context<UpdateConfig>, new_fee: u64) -> Result<()> {
+          // ❌ Inline authorization check instead of using access_controls
+          require!(ctx.accounts.owner.key() == ctx.accounts.config.owner, ErrorCode::Unauthorized);
+          
+          // ❌ Business logic in lib.rs
+          ctx.accounts.config.creation_fee = new_fee;
+          Ok(())
+      }
+  ```
+</example>

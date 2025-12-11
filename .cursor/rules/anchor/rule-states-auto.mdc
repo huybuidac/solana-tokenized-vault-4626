@@ -1,0 +1,85 @@
+---
+description: 
+globs: programs/*/src/states/*.rs
+alwaysApply: false
+---
+
+# States
+
+## Critical Rules
+
+- **Prioritize Zero Copy**:
+  - Always use `#[account(zero_copy)]` for state accounts to optimize memory usage and enable larger accounts
+  - Derive `InitSpace` for automatic space calculation: `#[derive(InitSpace)]`
+  - Access fields through `load()` or `load_mut()` methods in instructions
+  - Zero-copy accounts are more efficient and can hold more data than regular accounts
+
+- **Always Include Padding for Future Upgrades**:
+  - Add padding fields to every state struct to allow for future field additions without migration
+  - Use multiple padding levels: `_padding1: [u8; N]` and `_padding2: [u64; M]`
+
+- **Implement Core Business Logic**:
+  - Add helper methods in `impl` blocks for state-specific operations
+  - Emit events within state methods when appropriate
+
+- **Define Events for Important State Changes**:
+  - Create `#[event]` structs for all significant state mutations
+
+## Examples
+
+<example>
+  **Valid: Zero-copy state with padding, core logic, and events**
+  
+  ```rust
+  #[account(zero_copy)]
+  #[derive(InitSpace)]
+  pub struct Access {
+      pub account: Pubkey,
+      pub permissions: u128,
+      pub _padding1: [u8; 8],
+      pub _padding2: [u64; 13],
+  }
+  
+  impl Access {
+      pub fn has_permission(&self, permission: u128) -> bool {
+          self.permissions & permission == permission
+      }
+  
+      pub fn grant_permission(&mut self, permission: u128) -> Result<()> {
+          self.permissions |= permission;
+          emit!(PermissionGranted {
+              account: self.account,
+              permission,
+          });
+          Ok(())
+      }
+  }
+
+  #[event]
+  pub struct PermissionGranted {
+      pub account: Pubkey,
+      pub permission: u128,
+  }
+  ```
+</example>
+
+<example type="invalid">
+  **Invalid: Regular account without padding or helper methods**
+  
+  ```rust
+  // ❌ Using regular Account instead of zero_copy
+  #[account]
+  pub struct Access {
+      pub account: Pubkey,
+      pub permissions: u128,
+      pub permission_admins: u128,
+      // ❌ No padding fields for future upgrades
+  }
+  
+  // ❌ No impl block with core logic
+  // ❌ Logic is scattered in instruction handlers instead
+  
+  // ❌ Events defined elsewhere or not at all
+  ```
+</example>
+
