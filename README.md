@@ -1,88 +1,318 @@
-# Solana Program Boilerplate
+# Solana Tokenized Vault (ERC-4626)
 
-## 1. Overview
-Production-ready Anchor boilerplate for building scalable Solana programs. This template provides a solid foundation with clean architecture, comprehensive testing setup, and best practices for rapid development.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Anchor](https://img.shields.io/badge/Anchor-0.32.1-blueviolet.svg)](https://www.anchor-lang.com/)
+[![Solana](https://img.shields.io/badge/Solana-1.18+-black.svg)](https://solana.com/)
 
-## 2. Key Features
-- **Clean Architecture**: Separation of concerns with distinct layers for instructions, views, states, and utilities.
-- **Built-in Access Control**: Granular permission management using custom modifiers.
-- **Testing with LiteSVM**: High-performance, lightweight simulation for faster test execution.
-- **Ready Testing Fixture**: Pre-configured fixtures to streamline test setup.
-- **Extended Chai**: Custom assertions for easier testing, including balance change checks and BN comparisons (see `tests/fixtures/chai-extended.ts`).
+## Overview
+A production-ready Solana implementation of the [ERC-4626 Tokenized Vault Standard](https://ethereum.org/developers/docs/standards/tokens/erc-4626/). This program unifies the technical parameters of yield-bearing vaults on Solana, offering a standardized interface where shares represent proportional ownership of underlying SPL tokens.
 
-## 3. Tech Stack
-- **Anchor Framework**: Framework for Solana's Sealevel runtime.
-- **LiteSVM**: Fast Solana program simulation.
-- **Chai**: BDD / TDD assertion library.
+### Features
+- **ERC-4626 Compliant**: Full implementation of Deposit, Mint, Withdraw, Redeem.
+- **Inflation Attack Protected**: Implements [OpenZeppelin's virtual offset](https://docs.openzeppelin.com/contracts/5.x/erc4626#security-concern-inflation-attack) mechanism.
+- **High Precision**: Uses 9-decimal internal accounting regardless of asset decimals.
+- **Secure Architecture**: Built with Anchor, using PDA authorities and Token-2022.
 
-## 4. Prerequisites
-- **Rust**: Latest stable version.
-- **Solana Tool Suite**: Latest version.
-- **Anchor CLI**: Latest version.
-- **Node.js**: LTS version.
-- **Yarn**: Package manager.
+---
 
-## 5. Getting Started
+## 📚 Table of Contents
+- [1. Architecture & Design](#1-architecture--design)
+- [2. Setup & Initialization](#2-setup--initialization)
+- [3. Core Interactions (Write API)](#3-core-interactions-write-api)
+- [4. Simulation & Views (Read API)](#4-simulation--views-read-api)
+- [5. Sequence Diagrams](#5-sequence-diagrams)
+- [6. Development](#6-development)
 
-### Clone and Install Dependencies
+---
 
-1. **Clone the repository:**
-   ```bash
-   git clone <repository-url> <your-project-name>
-   cd <your-project-name>
-   ```
+## 1. Architecture & Design
 
-2. **Install dependencies:**
-   ```bash
-   yarn install
-   ```
+### Virtual Offset Protection
+To prevent the "Inflation Attack" (where attackers manipulate exchange rates by donating assets to an empty vault), this vault uses a **virtual shares/assets** system.
 
-### Run Testing
+$$Shares = \frac{Assets \times (TotalShares + 10^{\text{offset}})}{TotalAssets + 1}$$
 
-Execute the test suite using Anchor:
+#### Why `offsetDecimals`?
+We normalize precision to ensure granular share distribution even for low-decimal assets.
+- **Formula**: `offsetDecimals = 9 - assetDecimals`
+- **Example (USDC, 6 decimals)**: Offset = 3. Virtual Shares = $10^3 = 1000$.
+- **Example (SOL, 9 decimals)**: Offset = 0. Virtual Shares = $10^0 = 1$.
+
+This ensures the vault always operates with at least **9 decimals of precision** internally.
+
+---
+
+## 2. Setup & Initialization
+
+Before using the vault, the program must be initialized. This one-time process sets up the global configuration, creates the Vault Token (Shares Mint), and establishes the Asset Vault.
+
+### Configuration Parameters
+
+| Parameter | Type | Description |
+| :--- | :--- | :--- |
+| `name` | String | Name of the Shares Token (e.g., "Solana Yield Token") |
+| `symbol` | String | Symbol of the Shares Token (e.g., "vSOL") |
+| `uri` | String | URI pointing to off-chain metadata (JSON) for the token |
+
+### On-Chain Architecture (PDAs)
+
+Initialization creates critical Program Derived Addresses (PDAs) to manage state and assets securely without a private key.
+
+| Account | Seeds | Description |
+| :--- | :--- | :--- |
+| **Config** | `["config"]` | Stores global vault state and references. |
+| **Shares Mint** | `["shares_mint"]` | The Token-2022 mint for LP tokens. **Authority is itself** (PDA). <br/>*Decimals: 9 (MAX_DECIMALS)* |
+| **Asset Vault** | *(ATA Mechanism)* | A standard Associated Token Account owned by the **Shares Mint**. <br/>*Holds all locked assets.* |
+| **Access** | `["access", owner]` | Stores admin permissions/roles for the initializer. |
+
+### Initialization Example
+
+```typescript
+import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
+
+// 1. Prepare underlying asset (e.g., USDC Mint)
+const usdcMint = /* ... */;
+
+// 2. Initialize Program & Vault
+await program.methods
+  .initialize({
+    name: 'Magic USDC Vault',
+    symbol: 'mUSDC',
+    uri: 'https://arweave.net/metadata.json',
+  })
+  .accounts({
+    owner: provider.wallet.publicKey, // Admin
+    assetMint: usdcMint.publicKey,    // Underlying Asset
+    assetTokenProgram: TOKEN_PROGRAM_ID,
+    // PDAs (config, sharesMint, etc.) are automatically resolved by Anchor
+  })
+  .rpc();
+
+console.log("Vault Initialized! Asset Vault is ready to receive deposits.");
+```
+
+---
+
+## 3. Core Interactions (Write API)
+
+The vault supports 4 atomic operations divided into Entry (Deposit/Mint) and Exit (Withdraw/Redeem) flows.
+
+### API Reference
+
+| Operation | Type | Input (Param) | Output (Effect) | Rounding | Description |
+| :--- | :---: | :--- | :--- | :---: | :--- |
+| **`deposit`** | Entry | `assets` (u64) | Mints calculated `shares` | ⬇️ Down | User deposits exact assets, gets shares. Favors Vault. |
+| **`mint`** | Entry | `shares` (u64) | Transfers calculated `assets` | ⬆️ Up | User wants exact shares, pays assets. Protects User. |
+| **`withdraw`** | Exit | `assets` (u64) | Burns calculated `shares` | ⬆️ Up | User wants exact assets, burns shares. Protects Vault. |
+| **`redeem`** | Exit | `shares` (u64) | Transfers calculated `assets` | ⬇️ Down | User burns exact shares, gets assets. Favors Vault. |
+
+### Usage Example
+
+```typescript
+import { BN } from "@coral-xyz/anchor";
+
+// Constants
+const AMOUNT = new BN(1_000_000_000); // 1000 Assets
+const SHARES = new BN(1_000_000_000); // 1000 Shares
+
+// --- ENTRY: Providing Liquidity ---
+
+// Option A: Deposit exact assets (e.g., "Max" button)
+await program.methods
+  .deposit(AMOUNT)
+  .accounts({ assetMint, assetVault, sharesMint, /*...*/ })
+  .rpc();
+
+// Option B: Mint exact shares (e.g., "I want 1000 Vault Tokens")
+await program.methods
+  .mint(SHARES)
+  .accounts({ assetMint, assetVault, sharesMint, /*...*/ })
+  .rpc();
+
+// --- EXIT: Removing Liquidity ---
+
+// Option C: Withdraw exact assets (e.g., "Cash out 1000 USDC")
+await program.methods
+  .withdraw(AMOUNT)
+  .accounts({ assetMint, assetVault, sharesMint, /*...*/ })
+  .rpc();
+
+// Option D: Redeem exact shares (e.g., "Burn all my LP tokens")
+await program.methods
+  .redeem(SHARES)
+  .accounts({ assetMint, assetVault, sharesMint, /*...*/ })
+  .rpc();
+```
+
+---
+
+## 4. Simulation & Views (Read API)
+
+Preview functions are strictly **read-only**. They are essential for UI integration to show users expected outcomes (slippage, exchange rates) before they sign transactions.
+
+### Preview Mapping
+
+| Write Function | Corresponding View | Purpose |
+| :--- | :--- | :--- |
+| `deposit(assets)` | **`previewDeposit(assets)`** | Returns **shares** user *will receive* |
+| `mint(shares)` | **`previewMint(shares)`** | Returns **assets** user *must pay* |
+| `withdraw(assets)` | **`previewWithdraw(assets)`** | Returns **shares** user *must burn* |
+| `redeem(shares)` | **`previewRedeem(shares)`** | Returns **assets** user *will receive* |
+
+### Usage Example (UI Integration)
+
+```typescript
+// 1. Simulate the transaction result
+const assetsToDeposit = new BN(1000_000000);
+const expectedShares = await program.methods
+  .previewDeposit(assetsToDeposit)
+  .view();
+
+console.log(`You will receive: ${expectedShares.toString()} vault tokens`);
+
+// 2. Display exchange rate (1 Share = ? Assets)
+const oneShare = new BN(1_000_000_000); // Assumes 9 decimals
+const rate = await program.methods
+  .previewRedeem(oneShare)
+  .view();
+
+console.log(`Current Exchange Rate: 1 Vault Token = ${rate.toString()} Assets`);
+```
+
+---
+
+## 5. Sequence Diagrams
+
+### Asset/Token Flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as 👤 User
+    
+    box rgb(35, 45, 60) On-Chain Vault Context
+        participant P as ⚙️ Program
+        participant S as 🎫 Shares Mint PDA<br/>(Authority)
+        participant V as 💰 Asset Vault ATA<br/>(Owner: Shares Mint)
+    end
+
+    %% === ENTRY FLOWS ===
+    rect rgb(30, 60, 30)
+        Note right of U: 🟢 ENTRY FLOWS (Deposit/Mint)
+        
+        %% 1. MINT
+        U->>P: 1️⃣ mint(shares)
+        activate P
+        P->>V: CPI: Transfer assets (User ➔ Vault)
+        activate V
+        V-->>P: Success
+        deactivate V
+        P->>S: CPI: Mint shares to User
+        activate S
+        S-->>U: +Shares minted
+        deactivate S
+        deactivate P
+
+        %% 2. DEPOSIT
+        U->>P: 2️⃣ deposit(assets)
+        activate P
+        P->>V: CPI: Transfer assets (User ➔ Vault)
+        activate V
+        V-->>P: Success
+        deactivate V
+        P->>S: CPI: Mint shares to User
+        activate S
+        S-->>U: +Shares minted
+        deactivate S
+        deactivate P
+    end
+
+    %% === EXIT FLOWS ===
+    rect rgb(70, 30, 30)
+        Note right of U: 🔴 EXIT FLOWS (Withdraw/Redeem)
+
+        %% 3. WITHDRAW
+        U->>P: 3️⃣ withdraw(assets)
+        activate P
+        P->>S: CPI: Burn shares from User
+        activate S
+        S-->>P: Success
+        deactivate S
+        P->>V: CPI: Transfer assets (Vault ➔ User)
+        activate V
+        V-->>U: +Assets transferred
+        deactivate V
+        deactivate P
+
+        %% 4. REDEEM
+        U->>P: 4️⃣ redeem(shares)
+        activate P
+        P->>S: CPI: Burn shares from User
+        activate S
+        S-->>P: Success
+        deactivate S
+        P->>V: CPI: Transfer assets (Vault ➔ User)
+        activate V
+        V-->>U: +Assets transferred
+        deactivate V
+        deactivate P
+    end
+
+    %% === SPECIAL ===
+    rect rgb(70, 60, 20)
+        Note right of U: 🟡 SPECIAL
+        
+        %% 5. INCREASE PRICE
+        U->>V: 5️⃣ Wallet Transfer (No Program Call)
+        Note right of U: User sends assets directly to<br/>Vault ATA address via Wallet
+        activate V
+        Note over V,S: 📈 Share Price UP (TotalAssets ↑ / TotalShares ↔)
+        deactivate V
+    end
+```
+
+---
+
+## 6. Development
+
+### Prerequisites
+- **Rust**: Latest stable
+- **Solana CLI**: Latest
+- **Anchor CLI**: 0.30.1+
+- **Node.js**: LTS
+
+### Quick Start
 
 ```bash
+# 1. Install dependencies
+yarn install
+
+# 2. Build program
+anchor build
+
+# 3. Run tests (LiteSVM)
 anchor test
 ```
 
-### Build
-
-```bash
-# Build the program
-anchor build
-```
-
-## 6. Reference Implementation
-
-This boilerplate includes a **Token Factory** as a reference implementation, demonstrating:
-- Token creation with protocol fees
-- Whitelisted creation for fee-free token minting
-- Access control patterns
-- View functions for fee calculation
-
-You can use this as a starting point or replace it entirely with your own program logic.
-
-## 7. Directory Structure
+### Directory Structure
 
 ```text
-├── programs
-│   ├── token-factory
-│   │   ├── src
-│   │   │   ├── lib.rs            // Entry point
-│   │   │   ├── error.rs          // Error definitions
-│   │   │   ├── access_controls   // Authorization logic
-│   │   │   ├── instructions      // Instruction handlers
-│   │   │   │   └── admin         // Admin-specific instructions
-│   │   │   ├── views             // View functions
-│   │   │   ├── states            // Account state definitions
-│   │   │   └── utils             // Utility functions
-├── shared                        // Shared TypeScript code (tests & scripts)
-├── scripts                       // Interaction scripts
-├── tests
-│   ├── fixtures
-│   │   ├── chai-extended.ts      // Chai assertions extension
-│   │   ├── factory-fixture.ts    // Program test fixture
-│   │   ├── spl.ts                // Token utilities
-│   │   └── utils.ts              // General test helpers
-│   └── token-factory.ts          // Feature tests
+programs/tokenized-vault/src/
+├── lib.rs                    // Program entry point
+├── error.rs                  // Error definitions
+├── instructions/
+│   ├── deposit.rs            // deposit() & mint()
+│   ├── withdraw.rs           // withdraw() & redeem()
+│   └── admin/                // Admin functions
+├── views/
+│   └── preview.rs            // Read-only view functions
+├── states/
+│   ├── config.rs             // Vault state
+│   └── access.rs             // Permissions
+└── utils/
+    ├── shares_math.rs        // Core ERC-4626 math
+    └── full_math.rs          // U256/U512 arithmetic
 ```
+
+## License
+MIT

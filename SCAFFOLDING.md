@@ -4,7 +4,7 @@
 
 ### Initialize Project
 ```bash
-anchor new token-factory
+anchor new tokenized-vault
 ```
 
 ### Install Dependencies
@@ -16,7 +16,7 @@ yarn add -D @solana/spl-token @solana/web3.js @types/bn.js @types/bs58 @types/ch
 
 ```text
 ├── programs
-│   ├── token-factory
+│   ├── tokenized-vault
 │   │   ├── src
 │   │   │   ├── lib.rs            // Entry point
 │   │   │   ├── error.rs          // Error definitions
@@ -34,7 +34,7 @@ yarn add -D @solana/spl-token @solana/web3.js @types/bn.js @types/bs58 @types/ch
 │   │   ├── factory-fixture.ts    // Program test fixture
 │   │   ├── spl.ts                // Token utilities
 │   │   └── utils.ts              // General test helpers
-│   └── token-factory.ts          // Feature tests
+│   └── tokenized-vault.ts          // Feature tests
 ```
 
 ## 3. Features

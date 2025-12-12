@@ -8,4 +8,6 @@ pub enum ErrorCode {
     UnauthorizedPermission,
     #[msg("Unauthorized admin permission")]
     UnauthorizedAdminPermission,
+    #[msg("Invalid asset mint decimals")]
+    InvalidAssetMintDecimals,
 }

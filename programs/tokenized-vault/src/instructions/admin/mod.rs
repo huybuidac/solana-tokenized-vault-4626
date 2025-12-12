@@ -7,5 +7,5 @@ pub use permission::*;
 pub mod permission_admin;
 pub use permission_admin::*;
 
-pub mod config;
-pub use config::*;
+// pub mod config;
+// pub use config::*;
