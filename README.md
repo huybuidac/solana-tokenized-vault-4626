@@ -190,85 +190,79 @@ sequenceDiagram
     autonumber
     participant U as 👤 User
     
-    box rgb(35, 45, 60) On-Chain Vault Context
+    box "On-Chain Vault Context"
         participant P as ⚙️ Program
         participant S as 🎫 Shares Mint PDA<br/>(Authority)
         participant V as 💰 Asset Vault ATA<br/>(Owner: Shares Mint)
     end
 
     %% === ENTRY FLOWS ===
-    rect rgb(30, 60, 30)
-        Note right of U: 🟢 ENTRY FLOWS (Deposit/Mint)
-        
-        %% 1. MINT
-        U->>P: 1️⃣ mint(shares)
-        activate P
-        P->>V: CPI: Transfer assets (User ➔ Vault)
-        activate V
-        V-->>P: Success
-        deactivate V
-        P->>S: CPI: Mint shares to User
-        activate S
-        S-->>U: +Shares minted
-        deactivate S
-        deactivate P
+    Note right of U: 🟢 ENTRY FLOWS (Deposit/Mint)
+    
+    %% 1. MINT
+    U->>P: 1️⃣ mint(shares)
+    activate P
+    P->>V: CPI: Transfer assets (User ➔ Vault)
+    activate V
+    V-->>P: Success
+    deactivate V
+    P->>S: CPI: Mint shares to User
+    activate S
+    S-->>U: +Shares minted
+    deactivate S
+    deactivate P
 
-        %% 2. DEPOSIT
-        U->>P: 2️⃣ deposit(assets)
-        activate P
-        P->>V: CPI: Transfer assets (User ➔ Vault)
-        activate V
-        V-->>P: Success
-        deactivate V
-        P->>S: CPI: Mint shares to User
-        activate S
-        S-->>U: +Shares minted
-        deactivate S
-        deactivate P
-    end
+    %% 2. DEPOSIT
+    U->>P: 2️⃣ deposit(assets)
+    activate P
+    P->>V: CPI: Transfer assets (User ➔ Vault)
+    activate V
+    V-->>P: Success
+    deactivate V
+    P->>S: CPI: Mint shares to User
+    activate S
+    S-->>U: +Shares minted
+    deactivate S
+    deactivate P
 
     %% === EXIT FLOWS ===
-    rect rgb(70, 30, 30)
-        Note right of U: 🔴 EXIT FLOWS (Withdraw/Redeem)
+    Note right of U: 🔴 EXIT FLOWS (Withdraw/Redeem)
 
-        %% 3. WITHDRAW
-        U->>P: 3️⃣ withdraw(assets)
-        activate P
-        P->>S: CPI: Burn shares from User
-        activate S
-        S-->>P: Success
-        deactivate S
-        P->>V: CPI: Transfer assets (Vault ➔ User)
-        activate V
-        V-->>U: +Assets transferred
-        deactivate V
-        deactivate P
+    %% 3. WITHDRAW
+    U->>P: 3️⃣ withdraw(assets)
+    activate P
+    P->>S: CPI: Burn shares from User
+    activate S
+    S-->>P: Success
+    deactivate S
+    P->>V: CPI: Transfer assets (Vault ➔ User)
+    activate V
+    V-->>U: +Assets transferred
+    deactivate V
+    deactivate P
 
-        %% 4. REDEEM
-        U->>P: 4️⃣ redeem(shares)
-        activate P
-        P->>S: CPI: Burn shares from User
-        activate S
-        S-->>P: Success
-        deactivate S
-        P->>V: CPI: Transfer assets (Vault ➔ User)
-        activate V
-        V-->>U: +Assets transferred
-        deactivate V
-        deactivate P
-    end
+    %% 4. REDEEM
+    U->>P: 4️⃣ redeem(shares)
+    activate P
+    P->>S: CPI: Burn shares from User
+    activate S
+    S-->>P: Success
+    deactivate S
+    P->>V: CPI: Transfer assets (Vault ➔ User)
+    activate V
+    V-->>U: +Assets transferred
+    deactivate V
+    deactivate P
 
     %% === SPECIAL ===
-    rect rgb(70, 60, 20)
-        Note right of U: 🟡 SPECIAL
-        
-        %% 5. INCREASE PRICE
-        U->>V: 5️⃣ Wallet Transfer (No Program Call)
-        Note right of U: User sends assets directly to<br/>Vault ATA address via Wallet
-        activate V
-        Note over V,S: 📈 Share Price UP (TotalAssets ↑ / TotalShares ↔)
-        deactivate V
-    end
+    Note right of U: 🟡 SPECIAL (Direct Transfer)
+    
+    %% 5. INCREASE PRICE
+    U->>V: 5️⃣ Wallet Transfer (No Program Call)
+    Note right of U: User sends assets directly to<br/>Vault ATA address via Wallet
+    activate V
+    Note over V,S: 📈 Share Price UP (TotalAssets ↑ / TotalShares ↔)
+    deactivate V
 ```
 
 ---
